@@ -1,0 +1,176 @@
+---
+title: "Summarize week prototype"
+author: "Tamas Nagy"
+date: "1/29/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# TODO: Rewrite using the new reading function
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(tidyverse)
+library(googlesheets4)
+library(googledrive)
+library(lubridate)
+library(gt)
+library(readxl)
+
+theme_set(theme_light())
+
+```
+
+# Read data
+```{r}
+
+chores_gid <- "1cqq8YWKWbk11DuFPvTJa9hYSXUg_WL6Znh4KnrXPz6M"
+
+first_row <- range_read(chores_gid, 
+                        sheet = 1, 
+                        range = "A1:R1", 
+                        col_names = FALSE) %>% 
+    unlist(use.names = FALSE) %>%
+    zoo::na.locf()
+
+chore_vars <-
+    range_read(chores_gid, 
+               sheet = 1, 
+               range = "A2:R2", 
+               col_names = FALSE) %>% 
+    flatten() %>% 
+    unlist(use.names = FALSE) %>%
+    paste(first_row, ., sep = "_") %>% 
+    str_remove("_NA|-_-")
+
+chores <-
+    range_read(chores_gid,
+               sheet = 1, 
+               skip = 2,
+               trim_ws = TRUE,
+               col_names = chore_vars) %>%
+    fill(Room) %>% 
+    mutate(Room = fct_inorder(Room),
+           Task = fct_inorder(Task))
+
+chores_long <- 
+    chores %>% 
+    pivot_longer(Rozi_H:Tomi_V,
+                 names_to = c("person", "day"),
+                 names_pattern = "(.*)_(.*)",
+                 values_to = "done", 
+                 values_drop_na = TRUE) %>% 
+    filter(done)
+
+```
+
+# Weekly summary
+```{r}
+
+task_summary <-
+    chores_long %>% 
+    group_by(person, Room, Task) %>% 
+    summarise(done = sum(done), .groups = "drop") %>% 
+    pivot_wider(names_from = person,
+                values_from = done) %>% 
+    arrange(Room, Task)
+
+task_summary %>% 
+    gt(groupname_col = "Room") %>% 
+    fmt_missing(3:4) %>% 
+    cols_align(2, align = "left") %>% 
+    gt::summary_rows(columns = 3:4,
+                     groups = TRUE,
+                     fns = list(Sum = ~sum(., na.rm = TRUE)),
+                     formatter = fmt_number, 
+                     decimals = 0
+                     ) %>% 
+    gt::grand_summary_rows(columns = 3:4,
+                           fns = list(`Grand sum` = ~sum(., na.rm = TRUE)),
+                           formatter = fmt_number, 
+                           decimals = 0) %>% 
+    tab_options(row.striping.include_table_body = TRUE,
+                row.striping.background_color = "#EEEEEE", 
+                row.striping.include_stub = TRUE,
+                row_group.background.color = "black", 
+                column_labels.background.color = "black", 
+                data_row.padding = 1, 
+                summary_row.padding = 1,
+                column_labels.padding = 1,
+                row_group.padding = 1, 
+                grand_summary_row.padding = 1,
+                summary_row.background.color = "#999999",
+                grand_summary_row.background.color = "red"
+                )
+
+person_summary <-
+    chores_long %>% 
+    group_by(person) %>% 
+    summarise(`Weekly chores` = sum(done), .groups = "drop")
+
+```
+
+# Custom summary
+
+```{r}
+
+start_date <- "2022-01-24"
+end_date <- "2022-03-28"
+
+drive_download(as_id(chores_gid), 
+               path = "temp.xlsx", 
+               overwrite = TRUE)
+
+ch_sheets <- ymd(excel_sheets("temp.xlsx"))
+
+# Get the selected sheets
+selected_sheets <- intersect(ch_sheets,
+                             as_date(ymd(start_date):ymd(end_date))) %>% 
+                   as_date() %>% 
+                   as.character()
+
+chore_sheets <- 
+    tibble(sheet = selected_sheets,
+           data = map(sheet, ~read_chore_sheet("temp.xlsx", sheet = .x)),
+           long = map(data, sheet_to_long),
+           task_sum = map(long, sum_tasks))
+
+chore_sum <-
+    chore_sheets %>% 
+    select(sheet, task_sum) %>% 
+    mutate(sheet = ymd(sheet)) %>% 
+    unnest(task_sum) %>% 
+    pivot_longer(Rozi:Tomi, values_drop_na = TRUE) %>% 
+    group_by(sheet, name) %>% 
+    summarise(completed = sum(value))
+
+
+chore_sum %>% 
+    ggplot() +
+    aes(x = sheet, y = completed, color = name) +
+    geom_line() +
+    geom_point() +
+    expand_limits(y = 0)
+    
+
+chore_sum %>% 
+    group_by(name) %>% 
+    mutate(sum_comp = cumsum(completed)) %>% 
+    ggplot() +
+    aes(x = sheet, y = sum_comp, color = name) +
+    geom_line() +
+    geom_point() +
+    geom_col(position = "dodge", 
+         inherit.aes = FALSE,
+         alpha = .3,
+         aes(x = sheet, y = completed, fill = name)) +
+    expand_limits(y = 0) +
+    labs(title = str_glue("All chores completed over time from {start_date} to {end_date}"),
+         subtitle = "Bar charts show chore share on each week",
+         y = "# chores",
+         x = NULL
+         )
+
+# TODO: Percentage summaries intead of absolute
+# TODO: weekly um could contain barcarts too
+```
+
