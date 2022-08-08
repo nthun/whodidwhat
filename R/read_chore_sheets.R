@@ -3,35 +3,44 @@
 library(tidyverse)
 library(readxl)
 
-get_range <- function(path, sheet = 1, range = "A1:R1") {
+
+# Download sheet
+chores_download <- function(chores_gid, 
+                            path = "data/chores.xlsx", 
+                            overwrite = TRUE){
+
+    googledrive::drive_download(file = googlesheets4::as_sheets_id(chores_gid), 
+                                path = path, 
+                                overwrite = overwrite)
+}
+
+get_range <- function(path = "data/chores.xlsx", sheet = 1, range = "A1:R1") {
     readxl::read_xlsx(
         path = path,
         sheet = sheet,
         range = range,
-        col_names = FALSE
-    ) %>%
-        
-        unlist(use.names = FALSE) %>%
-        zoo::na.locf()
-    
+        col_names = FALSE) %>%
+    unlist(use.names = FALSE) %>%
+    zoo::na.locf()
 }
 
-get_vars <- function(path, sheet = 1, range = "A1:R1") {
+get_vars <- function(path = "data/chores.xlsx", sheet = 1, range = "A1:R1") {
     first_row <- get_range(path)
     
     readxl::read_xlsx(
         path = path,
         sheet = sheet,
         range = "A2:R2",
-        col_names = FALSE
-    ) %>%
-        purrr::flatten() %>%
-        unlist(use.names = FALSE) %>%
-        paste(first_row, ., sep = "_") %>%
-        stringr::str_remove("_NA|-_-")
+        col_names = FALSE) %>%
+    purrr::flatten() %>%
+    unlist(use.names = FALSE) %>%
+    paste(first_row, ., sep = "_") %>%
+    stringr::str_remove("_NA|-_-")
 }
 
-read_chore_sheet <- function(path, sheet = 1, range = "A1:R1") {
+read_chore_sheet <- function(path = "data/chores.xlsx", 
+                             sheet = 1, 
+                             range = "A1:R1") {
     suppressMessages(
         readxl::read_xlsx(
             path = path,
@@ -46,7 +55,7 @@ read_chore_sheet <- function(path, sheet = 1, range = "A1:R1") {
     )
 }
 
-sheet_to_long <- function(df){
+chores_to_long <- function(df){
     df %>% 
         pivot_longer(Rozi_H:Tomi_V,
                      names_to = c("person", "day"),
@@ -66,3 +75,6 @@ sum_tasks <- function(df){
         arrange(Room, Task)
     
 }
+
+# Function to read several sheets into a nested tibble
+
